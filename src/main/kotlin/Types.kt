@@ -2,15 +2,15 @@ import com.beust.klaxon.JsonArray
 import com.beust.klaxon.JsonObject
 import org.apache.jena.rdf.model.Resource
 
-val ALLOWED_ENTITY_TYPES = listOf(
-    "Restaurant",
-    "FastFoodRestaurant",
-    "BarOrPub",
-    "Winery",
-    "IceCreamShop"
+val ALLOWED_ENTITY_TYPES = mapOf(
+    "Restaurant" to listOf("Restaurant"),
+    "FastFoodRestaurant" to listOf("Fast Food", "Fast-Food", "Fast food restaurant"),
+    "BarOrPub" to listOf("Bar", "Pub"),
+    "Winery" to listOf("Winery"),
+    "IceCreamShop" to listOf("Ice cream shop", "Icecream shop", "Ice cream parlor", "Icecream parlor")
 )
 
-data class Type(val resource: Resource) {
+data class Type(val resource: Resource, val names: List<String>) {
 
     fun selectAllNames(): List<Pair<Resource, String>> {
         println("Selecting all entities of type $this")
@@ -30,7 +30,9 @@ data class Type(val resource: Resource) {
         }.filterNotNull().distinctBy { it.second }
     }
 
+
     val name = resource.localName!!
+    val propertiesSlotName = "properties_of_$name"
 
     override fun toString() = name
 
@@ -40,17 +42,20 @@ data class Type(val resource: Resource) {
                 "id" to resource.uri,
                 "name" to JsonObject(
                     mapOf(
-                        "value" to name
+                        "value" to names[0],
+                        "synonyms" to JsonArray(names.drop(1))
                     )
                 )
             )
         )
     }
 
+    val slotName = "entity_type_" + resource.localName.toString()
+
     fun entitySlotTypes(): JsonObject {
         return JsonObject(
             mapOf(
-                "name" to "entity-type." + resource.localName.toString(),
+                "name" to slotName,
                 "values" to JsonArray(selectAllNames().map { (res, name) ->
                     JsonObject(
                         mapOf(
@@ -66,6 +71,24 @@ data class Type(val resource: Resource) {
             )
         )
     }
+
+    val properties by lazy {
+        sparql(
+            """
+                select distinct ?property
+                where {
+                         ?instance a <${resource.uri}> . 
+                         ?instance ?property ?obj .
+                }
+            """.trimIndent()
+        ).selectMap {
+            val property = it.getResource("property")
+            val names = ALLOWED_PROPERTIES[property.localName]
+            if (names != null) {
+                Property(property, names)
+            } else null
+        }.filterNotNull()
+    }
 }
 
 fun types(): List<Type> {
@@ -79,6 +102,10 @@ fun types(): List<Type> {
             }
         """.trimIndent()
     ).selectMap {
-        Type(it.getResource("type"))
-    }.filter { it.name in ALLOWED_ENTITY_TYPES }
+        val type = it.getResource("type")
+        val names = ALLOWED_ENTITY_TYPES[type.localName]
+        if (names != null) {
+            Type(type, names)
+        } else null
+    }.filterNotNull()
 }
